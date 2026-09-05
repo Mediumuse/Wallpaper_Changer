@@ -1,0 +1,10 @@
+# Python bytecode & caches
+__pycache__/
+*.py[cod]
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Exclude local wallpapers download folder
+ArtWallpapers/
