@@ -8,3 +8,7 @@ Thumbs.db
 
 # Exclude local wallpapers download folder
 ArtWallpapers/
+
+# Local user configuration and generated metadata
+config.json
+metadata.txt

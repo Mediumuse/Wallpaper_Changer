@@ -1,17 +1,23 @@
 import os
 import socket
+import subprocess
 import sys
 import threading
+import textwrap
 from PIL import Image, ImageDraw, ImageOps
 import pystray
+
+from app_paths import get_app_data_dir, get_wallpaper_dir
+from metadata_utils import UNKNOWN_DATE, normalize_artwork_date
 
 HOST = "127.0.0.1"
 PORT = 65432
 ICON_SIZE = 256
+DATE_UNAVAILABLE = UNKNOWN_DATE
 
 
 def get_current_wallpaper_path():
-    wallpaper_dir = os.path.expanduser("~/ArtWallpapers")
+    wallpaper_dir = get_wallpaper_dir()
     valid_extensions = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
 
     try:
@@ -28,19 +34,18 @@ def get_current_wallpaper_path():
 
 
 def get_metadata_path():
-    if getattr(sys, "frozen", False):
-        project_dir = os.path.dirname(sys.executable)
-    elif "__file__" in globals():
-        project_dir = os.path.dirname(os.path.abspath(__file__))
-    else:
-        project_dir = os.getcwd()
-    return os.path.join(project_dir, "metadata.txt")
+    return os.path.join(get_app_data_dir(), "metadata.txt")
 
 
 def read_metadata():
     path = get_metadata_path()
     if not os.path.exists(path):
-        return "Daily Art", "No metadata generated yet.", "Unknown Date"
+        return (
+            "Daily Art",
+            "No metadata generated yet.",
+            DATE_UNAVAILABLE,
+            "Artist information unavailable.",
+        )
 
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -48,10 +53,18 @@ def read_metadata():
 
         title = lines[0] if len(lines) > 0 else "Unknown Title"
         artist = lines[1] if len(lines) > 1 else "Unknown Artist"
-        date = lines[2] if len(lines) > 2 else "Unknown Date"
-        return title, artist, date
+        date = normalize_artwork_date(lines[2]) if len(lines) > 2 else DATE_UNAVAILABLE
+        artist_blurb = (
+            lines[3] if len(lines) > 3 else "Artist information unavailable."
+        )
+        return title, artist, date, artist_blurb
     except Exception as e:
-        return "Daily Art", f"Error reading metadata: {e}", "Unknown Date"
+        return (
+            "Daily Art",
+            f"Error reading metadata: {e}",
+            DATE_UNAVAILABLE,
+            "Artist information unavailable.",
+        )
 
 
 def create_tray_icon_image():
@@ -91,35 +104,75 @@ def create_tray_icon_image():
 
 class ArtTrayApp:
     def __init__(self):
-        self.title, self.artist, self.date = read_metadata()
+        self.title, self.artist, self.date, self.artist_blurb = read_metadata()
         self.icon = None
         self._stop_event = threading.Event()
         self._listener_started = threading.Event()
         self._listener_error = None
 
     def build_tooltip(self):
-        return f"🎨 {self.title}\n👤 {self.artist}\n📅 {self.date}"
+        hover_text = f"{self.title} | {self.artist} | {self.date}"
+        return hover_text if len(hover_text) <= 120 else f"{hover_text[:117]}..."
 
     def update_metadata(self):
-        self.title, self.artist, self.date = read_metadata()
-
-        title = f"Wallpaper: {self.title}"
-        message = f"Artist: {self.artist} ({self.date})"
-        safe_title = title[:60] + "..." if len(title) > 64 else title
-        safe_msg = message[:250] + "..." if len(message) > 256 else message
+        self.title, self.artist, self.date, self.artist_blurb = read_metadata()
 
         if self.icon:
             self.icon.icon = create_tray_icon_image()
             self.icon.title = self.build_tooltip()
             self.icon.menu = self.build_menu()
-            self.icon.notify(safe_msg, title=safe_title)
+            message = f"{self.title}\n{self.artist}\nDate: {self.date}"
+            safe_message = message[:250] + "..." if len(message) > 256 else message
+            self.icon.notify(safe_message, title="Wallpaper changed")
+
+    def on_change_wallpaper(self, icon, item):
+        project_dir = os.path.dirname(os.path.abspath(__file__))
+        script_path = os.path.join(project_dir, "wallpaper_changer.py")
+        log_path = os.path.join(get_app_data_dir(), "wallpaper_changer.log")
+
+        try:
+            os.makedirs(get_app_data_dir(), exist_ok=True)
+            startupinfo = None
+            creationflags = 0
+            if os.name == "nt":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                creationflags = subprocess.CREATE_NO_WINDOW
+
+            with open(log_path, "a", encoding="utf-8") as log_file:
+                subprocess.Popen(
+                    [sys.executable, script_path],
+                    cwd=project_dir,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    startupinfo=startupinfo,
+                    creationflags=creationflags,
+                )
+        except OSError as e:
+            message = f"Could not start wallpaper changer: {e}"
+            print(message)
+            icon.notify(message[:250], title="Wallpaper changer error")
 
     def build_menu(self):
+        blurb_lines = textwrap.wrap(self.artist_blurb, width=60) or [
+            "Artist information unavailable."
+        ]
+        artist_info_menu = pystray.Menu(
+            *(
+                pystray.MenuItem(line, lambda: None, enabled=False)
+                for line in blurb_lines
+            )
+        )
         return pystray.Menu(
             pystray.MenuItem(f"Title: {self.title}", lambda: None, enabled=False),
             pystray.MenuItem(f"Artist: {self.artist}", lambda: None, enabled=False),
             pystray.MenuItem(f"Date: {self.date}", lambda: None, enabled=False),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Artist information", artist_info_menu),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Change Wallpaper", self.on_change_wallpaper),
             pystray.MenuItem("Refresh Metadata", lambda: self.update_metadata()),
             pystray.MenuItem("Exit", self.on_quit)
         )
@@ -143,11 +196,22 @@ class ArtTrayApp:
                     with conn:
                         conn.settimeout(1.0)
                         try:
-                            data = conn.recv(1024)
+                            request = conn.recv(1024).strip()
+                            if request == b"UPDATE":
+                                self.update_metadata()
+                                conn.sendall(b"OK\n")
+                            else:
+                                conn.sendall(b"ERROR: unknown request\n")
                         except socket.timeout:
                             continue
-                        if data == b"UPDATE":
-                            self.update_metadata()
+                        except OSError as e:
+                            print(f"IPC request failed: {e}")
+                        except Exception as e:
+                            print(f"Could not refresh tray metadata: {e}")
+                            try:
+                                conn.sendall(f"ERROR: {e}\n".encode("utf-8"))
+                            except OSError:
+                                pass
         except OSError as e:
             self._listener_error = e
             self._listener_started.set()
