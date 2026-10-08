@@ -7,6 +7,7 @@ import pystray
 
 HOST = "127.0.0.1"
 PORT = 65432
+ICON_SIZE = 256
 
 
 def get_current_wallpaper_path():
@@ -60,22 +61,31 @@ def create_tray_icon_image():
             with Image.open(wallpaper_path) as wallpaper:
                 return ImageOps.fit(
                     wallpaper.convert("RGB"),
-                    (64, 64),
+                    (ICON_SIZE, ICON_SIZE),
                     method=Image.Resampling.LANCZOS,
                 )
         except (OSError, ValueError) as e:
             print(f"Could not load wallpaper for tray icon: {e}")
 
-    image = Image.new("RGBA", (64, 64), color=(0, 0, 0, 0))
+    image = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), color=(0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    
-    # Outer ring
-    draw.ellipse((4, 4, 60, 60), fill=(40, 44, 52), outline=(220, 220, 220), width=3)
-    
-    # Artistic shapes
-    draw.polygon([(20, 44), (32, 20), (44, 44)], fill=(230, 126, 34))
-    draw.ellipse((26, 36, 38, 48), fill=(52, 152, 219))
-    
+
+    scale = ICON_SIZE / 64
+    draw.ellipse(
+        (4 * scale, 4 * scale, 60 * scale, 60 * scale),
+        fill=(40, 44, 52),
+        outline=(220, 220, 220),
+        width=round(3 * scale),
+    )
+    draw.polygon(
+        [(20 * scale, 44 * scale), (32 * scale, 20 * scale), (44 * scale, 44 * scale)],
+        fill=(230, 126, 34),
+    )
+    draw.ellipse(
+        (26 * scale, 36 * scale, 38 * scale, 48 * scale),
+        fill=(52, 152, 219),
+    )
+
     return image
 
 
