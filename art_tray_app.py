@@ -2,11 +2,28 @@ import os
 import socket
 import sys
 import threading
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 import pystray
 
 HOST = "127.0.0.1"
 PORT = 65432
+
+
+def get_current_wallpaper_path():
+    wallpaper_dir = os.path.expanduser("~/ArtWallpapers")
+    valid_extensions = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
+
+    try:
+        candidates = [
+            os.path.join(wallpaper_dir, filename)
+            for filename in os.listdir(wallpaper_dir)
+            if os.path.splitext(filename)[0] == "daily_wallpaper"
+            and os.path.splitext(filename)[1].lower() in valid_extensions
+        ]
+    except FileNotFoundError:
+        return None
+
+    return max(candidates, key=os.path.getmtime) if candidates else None
 
 
 def get_metadata_path():
@@ -37,6 +54,18 @@ def read_metadata():
 
 
 def create_tray_icon_image():
+    wallpaper_path = get_current_wallpaper_path()
+    if wallpaper_path:
+        try:
+            with Image.open(wallpaper_path) as wallpaper:
+                return ImageOps.fit(
+                    wallpaper.convert("RGB"),
+                    (64, 64),
+                    method=Image.Resampling.LANCZOS,
+                )
+        except (OSError, ValueError) as e:
+            print(f"Could not load wallpaper for tray icon: {e}")
+
     image = Image.new("RGBA", (64, 64), color=(0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     
@@ -70,6 +99,7 @@ class ArtTrayApp:
         safe_msg = message[:250] + "..." if len(message) > 256 else message
 
         if self.icon:
+            self.icon.icon = create_tray_icon_image()
             self.icon.title = self.build_tooltip()
             self.icon.menu = self.build_menu()
             self.icon.notify(safe_msg, title=safe_title)
