@@ -75,8 +75,8 @@ def choose_random_candidates(images, state_path, count=3, rng=None, previous_ima
     new_images = [
         title for key, title in available.items() if key not in seen
     ]
-    rng.shuffle(new_images)
     remaining.extend(new_images)
+    rng.shuffle(remaining)
 
     if not remaining:
         remaining = list(available.values())

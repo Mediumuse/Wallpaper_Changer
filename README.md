@@ -75,6 +75,8 @@ the tray's **Artist information** submenu and a short excerpt appears on hover.
 
 - Wallpapers are saved to `%USERPROFILE%\ArtWallpapers`.
 - Generated metadata is saved under `%LOCALAPPDATA%\WallpaperChanger`.
+- Gallery images are randomized each time the wallpaper changer runs, which
+  gives each execution a fresh selection order.
 - `metadata.example.txt` illustrates the generated metadata format; it is not
   read by the app.
 - The wallpaper changer tries up to three random images if a download fails.

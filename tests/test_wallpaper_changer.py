@@ -10,6 +10,7 @@ import wallpaper_changer
 import art_tray_app
 from artist_blurbs import normalize_file_title, parse_artist_blurbs
 from metadata_utils import normalize_artwork_date
+from selection_history import choose_random_candidates
 
 
 class LoadGalleryPageTests(unittest.TestCase):
@@ -160,6 +161,27 @@ class ArtworkDateTests(unittest.TestCase):
 
     def test_unrecognized_date_text_is_unknown(self):
         self.assertEqual(normalize_artwork_date("1916date extra text 83"), "Unknown")
+
+
+class SelectionHistoryTests(unittest.TestCase):
+    def test_reshuffles_remaining_images_on_each_run(self):
+        class RotateRandom:
+            def shuffle(self, items):
+                items[:] = items[1:] + items[:1]
+
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = os.path.join(directory, "selection.json")
+            images = ["File:A.jpg", "File:B.jpg", "File:C.jpg", "File:D.jpg"]
+
+            first = choose_random_candidates(
+                images, state_path, count=1, rng=RotateRandom()
+            )
+            second = choose_random_candidates(
+                images, state_path, count=1, rng=RotateRandom()
+            )
+
+        self.assertEqual(first, ["File:B.jpg"])
+        self.assertEqual(second, ["File:D.jpg"])
 
 
 class TrayNotificationTests(unittest.TestCase):
