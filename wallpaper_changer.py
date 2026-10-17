@@ -12,7 +12,6 @@ import requests
 from app_paths import get_app_data_dir, get_wallpaper_dir
 from artist_blurbs import normalize_file_title, parse_artist_blurbs
 from metadata_utils import UNKNOWN_DATE, normalize_artwork_date
-from selection_history import choose_random_candidates, get_selection_state_path
 
 HEADERS = {
     "User-Agent": "WallpaperChanger/1.0 (https://github.com/Mediumuse/Wallpaper_Changer)"
@@ -141,6 +140,56 @@ def get_gallery_images(user_page):
         return []
 
 
+def get_previous_image(images, metadata_path):
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as metadata_file:
+            metadata = metadata_file.readlines()
+    except FileNotFoundError:
+        return None
+
+    if len(metadata) > 4 and metadata[4].strip():
+        return metadata[4].strip()
+
+    previous_title = metadata[0].strip() if metadata else ""
+    if not previous_title:
+        return None
+
+    previous_key = normalize_file_title(previous_title)
+    for image in images:
+        filename = image.partition(":")[2]
+        image_title = os.path.splitext(filename)[0]
+        if normalize_file_title(image_title) == previous_key:
+            return image
+    return None
+
+
+def get_randomized_images(images, previous_image=None, rng=None):
+    rng = rng or random.SystemRandom()
+    unique_images = {}
+    for image in images:
+        key = normalize_file_title(image)
+        if key not in unique_images:
+            unique_images[key] = image
+
+    randomized_images = list(unique_images.values())
+    rng.shuffle(randomized_images)
+
+    if previous_image and len(randomized_images) > 1:
+        previous_key = normalize_file_title(previous_image)
+        previous_index = next(
+            (
+                index
+                for index, image in enumerate(randomized_images)
+                if normalize_file_title(image) == previous_key
+            ),
+            None,
+        )
+        if previous_index == 0:
+            randomized_images.append(randomized_images.pop(0))
+
+    return randomized_images
+
+
 def get_gallery_artist_blurbs(user_page):
     endpoint = "https://commons.wikimedia.org/w/api.php"
     params = {
@@ -245,13 +294,14 @@ def export_artwork_metadata(
     artist="Unknown Artist",
     date=DATE_UNAVAILABLE,
     artist_blurb="Artist information unavailable.",
+    source_title="",
 ):
     try:
         os.makedirs(get_app_data_dir(), exist_ok=True)
         metadata_path = os.path.join(get_app_data_dir(), "metadata.txt")
 
         clean_blurb = " ".join(artist_blurb.splitlines()).strip()
-        content = f"{title}\n{artist}\n{date}\n{clean_blurb}"
+        content = f"{title}\n{artist}\n{date}\n{clean_blurb}\n{source_title}"
 
         temporary_path = f"{metadata_path}.tmp"
         with open(temporary_path, "w", encoding="utf-8") as metadata_file:
@@ -305,25 +355,11 @@ def main():
     artist_blurbs = get_gallery_artist_blurbs(gallery_page)
 
     try:
-        current_wallpaper = get_wallpaper_dir()
         current_metadata_path = os.path.join(get_app_data_dir(), "metadata.txt")
-        previous_image = None
-        try:
-            with open(current_metadata_path, "r", encoding="utf-8") as metadata_file:
-                previous_title = metadata_file.readline().strip()
-            if previous_title:
-                previous_image = f"File:{previous_title}"
-        except FileNotFoundError:
-            pass
-
-        candidates = choose_random_candidates(
-            images,
-            get_selection_state_path(gallery_page),
-            count=3,
-            previous_image=previous_image,
-        )
-    except (OSError, ValueError) as e:
-        print(f"Could not update wallpaper selection history: {e}")
+        previous_image = get_previous_image(images, current_metadata_path)
+        candidates = get_randomized_images(images, previous_image=previous_image)
+    except OSError as e:
+        print(f"Could not read previous wallpaper metadata: {e}")
         return 2
 
     for selected_image in candidates:
@@ -357,6 +393,7 @@ def main():
                 artist=artist_name,
                 date=art_date,
                 artist_blurb=artist_blurb,
+                source_title=selected_image,
             )
 
             print(

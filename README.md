@@ -75,11 +75,14 @@ the tray's **Artist information** submenu and a short excerpt appears on hover.
 
 - Wallpapers are saved to `%USERPROFILE%\ArtWallpapers`.
 - Generated metadata is saved under `%LOCALAPPDATA%\WallpaperChanger`.
-- Gallery images are randomized each time the wallpaper changer runs, which
-  gives each execution a fresh selection order.
+- Gallery images are randomized each time the wallpaper changer runs. It tries
+  every image in that order until one succeeds, avoiding the previous wallpaper
+  first when the gallery has alternatives. The exact Commons file title is saved
+  with the artwork metadata so it can be skipped on the next run.
 - `metadata.example.txt` illustrates the generated metadata format; it is not
   read by the app.
-- The wallpaper changer tries up to three random images if a download fails.
+- If an image cannot be resolved or downloaded, the wallpaper changer continues
+  through the randomized gallery list.
 - Artwork dates come only from Commons artwork-creation fields; upload
   timestamps are not used. When Commons has no artwork date, the tray shows
   `Unknown`.

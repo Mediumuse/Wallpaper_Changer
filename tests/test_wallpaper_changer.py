@@ -4,13 +4,13 @@ import socket
 import tempfile
 import threading
 import unittest
+from contextlib import ExitStack
 from unittest.mock import Mock, patch
 
 import wallpaper_changer
 import art_tray_app
 from artist_blurbs import normalize_file_title, parse_artist_blurbs
 from metadata_utils import normalize_artwork_date
-from selection_history import choose_random_candidates
 
 
 class LoadGalleryPageTests(unittest.TestCase):
@@ -163,25 +163,154 @@ class ArtworkDateTests(unittest.TestCase):
         self.assertEqual(normalize_artwork_date("1916date extra text 83"), "Unknown")
 
 
-class SelectionHistoryTests(unittest.TestCase):
-    def test_reshuffles_remaining_images_on_each_run(self):
-        class RotateRandom:
+class ImageSelectionTests(unittest.TestCase):
+    def test_randomizes_all_images_and_moves_previous_wallpaper_to_the_end(self):
+        class KeepOrder:
             def shuffle(self, items):
-                items[:] = items[1:] + items[:1]
+                pass
 
+        images = [
+            "File:Current.jpg",
+            "File:Next.jpg",
+            "File:Another.jpg",
+            "File:Current.jpg",
+        ]
+
+        randomized = wallpaper_changer.get_randomized_images(
+            images, previous_image="File:Current.jpg", rng=KeepOrder()
+        )
+
+        self.assertEqual(
+            randomized,
+            ["File:Next.jpg", "File:Another.jpg", "File:Current.jpg"],
+        )
+
+    def test_reads_exact_previous_file_title_and_supports_legacy_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
-            state_path = os.path.join(directory, "selection.json")
-            images = ["File:A.jpg", "File:B.jpg", "File:C.jpg", "File:D.jpg"]
+            metadata_path = os.path.join(directory, "metadata.txt")
+            images = ["File:Example_image.jpg", "File:Other.png"]
 
-            first = choose_random_candidates(
-                images, state_path, count=1, rng=RotateRandom()
-            )
-            second = choose_random_candidates(
-                images, state_path, count=1, rng=RotateRandom()
+            with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+                metadata_file.write("Example image\nArtist\n1900\nBlurb\n")
+            self.assertEqual(
+                wallpaper_changer.get_previous_image(images, metadata_path),
+                "File:Example_image.jpg",
             )
 
-        self.assertEqual(first, ["File:B.jpg"])
-        self.assertEqual(second, ["File:D.jpg"])
+            with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+                metadata_file.write(
+                    "Example image\nArtist\n1900\nBlurb\nFile:Other.png\n"
+                )
+            self.assertEqual(
+                wallpaper_changer.get_previous_image(images, metadata_path),
+                "File:Other.png",
+            )
+
+    def test_main_records_the_image_that_successfully_downloads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_data_dir = os.path.join(directory, "appdata")
+            wallpaper_dir = os.path.join(directory, "wallpapers")
+            candidates = [
+                "File:Unavailable.jpg",
+                "File:FailedDownload.jpg",
+                "File:Success.png",
+                "File:Later.jpg",
+            ]
+
+            with ExitStack() as stack:
+                stack.enter_context(
+                    patch.object(
+                        wallpaper_changer,
+                        "load_gallery_page",
+                        return_value="User:Example",
+                    )
+                )
+                stack.enter_context(
+                    patch.object(
+                        wallpaper_changer,
+                        "get_gallery_images",
+                        return_value=candidates,
+                    )
+                )
+                stack.enter_context(
+                    patch.object(
+                        wallpaper_changer,
+                        "get_gallery_artist_blurbs",
+                        return_value={},
+                    )
+                )
+                stack.enter_context(
+                    patch.object(
+                        wallpaper_changer,
+                        "get_previous_image",
+                        return_value=None,
+                    )
+                )
+                stack.enter_context(
+                    patch.object(
+                        wallpaper_changer,
+                        "get_randomized_images",
+                        return_value=candidates,
+                    )
+                )
+                get_details = stack.enter_context(
+                    patch.object(
+                        wallpaper_changer,
+                        "get_wikimedia_image_details",
+                        side_effect=[
+                            (None, "Unknown Artist", "Unknown"),
+                            (
+                                "https://upload.wikimedia.org/FailedDownload.jpg",
+                                "Example Artist",
+                                "1900",
+                            ),
+                            (
+                                "https://upload.wikimedia.org/Success.png",
+                                "Example Artist",
+                                "1900",
+                            ),
+                        ],
+                    )
+                )
+                stack.enter_context(
+                    patch.object(
+                        wallpaper_changer,
+                        "download_image",
+                        side_effect=[False, True],
+                    )
+                )
+                stack.enter_context(patch.object(wallpaper_changer, "set_wallpaper"))
+                stack.enter_context(
+                    patch.object(
+                        wallpaper_changer,
+                        "get_app_data_dir",
+                        return_value=app_data_dir,
+                    )
+                )
+                stack.enter_context(
+                    patch.object(
+                        wallpaper_changer,
+                        "get_wallpaper_dir",
+                        return_value=wallpaper_dir,
+                    )
+                )
+                stack.enter_context(
+                    patch.object(wallpaper_changer, "notify_tray_app")
+                )
+                result = wallpaper_changer.main()
+
+            self.assertEqual(result, 0)
+            self.assertEqual(
+                [call.args[0] for call in get_details.call_args_list],
+                candidates[:3],
+            )
+            with open(
+                os.path.join(app_data_dir, "metadata.txt"),
+                "r",
+                encoding="utf-8",
+            ) as metadata_file:
+                metadata = metadata_file.read().splitlines()
+            self.assertEqual(metadata[4], "File:Success.png")
 
 
 class TrayNotificationTests(unittest.TestCase):

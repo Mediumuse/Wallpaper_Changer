@@ -2,3 +2,4 @@ Example artwork title
 Example artist
 Example date
 Example artist background description.
+File:Example image.jpg
